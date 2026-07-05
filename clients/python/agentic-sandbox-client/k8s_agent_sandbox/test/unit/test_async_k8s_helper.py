@@ -629,5 +629,100 @@ class TestAsyncK8sHelperWaitForGatewayIP(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(ip, "192.168.1.1")
 
 
+class TestAsyncK8sHelperConfigurationInit(unittest.IsolatedAsyncioTestCase):
+    @patch("k8s_agent_sandbox.async_k8s_helper.client.ApiClient")
+    @patch("k8s_agent_sandbox.async_k8s_helper.client.CoreV1Api")
+    @patch("k8s_agent_sandbox.async_k8s_helper.client.CustomObjectsApi")
+    @patch("k8s_agent_sandbox.async_k8s_helper.config")
+    async def test_default_path_loads_incluster_config(
+        self, mock_config, mock_custom_api_cls, mock_core_api_cls, mock_api_client_cls
+    ):
+        owned_client = MagicMock()
+        mock_api_client_cls.return_value = owned_client
+
+        helper = AsyncK8sHelper()
+        await helper._ensure_initialized()
+
+        mock_config.load_incluster_config.assert_called_once()
+        mock_config.load_kube_config.assert_not_called()
+        mock_api_client_cls.assert_called_once_with()
+        mock_custom_api_cls.assert_called_once_with(owned_client)
+        mock_core_api_cls.assert_called_once_with(owned_client)
+
+    @patch("k8s_agent_sandbox.async_k8s_helper.client.ApiClient")
+    @patch("k8s_agent_sandbox.async_k8s_helper.client.CoreV1Api")
+    @patch("k8s_agent_sandbox.async_k8s_helper.client.CustomObjectsApi")
+    @patch("k8s_agent_sandbox.async_k8s_helper.config")
+    async def test_default_path_falls_back_to_kubeconfig_on_config_exception(
+        self, mock_config, mock_custom_api_cls, mock_core_api_cls, mock_api_client_cls
+    ):
+        from kubernetes_asyncio.config.config_exception import ConfigException
+
+        owned_client = MagicMock()
+        mock_api_client_cls.return_value = owned_client
+        mock_config.ConfigException = ConfigException
+        mock_config.load_incluster_config.side_effect = ConfigException("not in cluster")
+        mock_config.load_kube_config = AsyncMock()
+
+        helper = AsyncK8sHelper()
+        await helper._ensure_initialized()
+
+        mock_config.load_kube_config.assert_awaited_once()
+        mock_custom_api_cls.assert_called_once_with(owned_client)
+        mock_core_api_cls.assert_called_once_with(owned_client)
+
+    @patch("k8s_agent_sandbox.async_k8s_helper.client.ApiClient")
+    @patch("k8s_agent_sandbox.async_k8s_helper.client.CoreV1Api")
+    @patch("k8s_agent_sandbox.async_k8s_helper.client.CustomObjectsApi")
+    @patch("k8s_agent_sandbox.async_k8s_helper.config")
+    async def test_configuration_skips_default_config_loading(
+        self, mock_config, mock_custom_api_cls, mock_core_api_cls, mock_api_client_cls
+    ):
+        from kubernetes_asyncio import client as async_client
+
+        configuration = MagicMock(spec=async_client.Configuration)
+        built_client = MagicMock()
+        mock_api_client_cls.return_value = built_client
+
+        helper = AsyncK8sHelper(configuration=configuration)
+        await helper._ensure_initialized()
+
+        self.assertTrue(helper._initialized)
+        mock_config.load_incluster_config.assert_not_called()
+        mock_config.load_kube_config.assert_not_called()
+        mock_api_client_cls.assert_called_once_with(configuration=configuration)
+        mock_custom_api_cls.assert_called_once_with(built_client)
+        mock_core_api_cls.assert_called_once_with(built_client)
+
+    @patch("k8s_agent_sandbox.async_k8s_helper.client.ApiClient")
+    @patch("k8s_agent_sandbox.async_k8s_helper.client.CoreV1Api")
+    @patch("k8s_agent_sandbox.async_k8s_helper.client.CustomObjectsApi")
+    async def test_close_rebuilds_client_from_configuration_on_reuse(
+        self, mock_custom_api_cls, mock_core_api_cls, mock_api_client_cls
+    ):
+        from kubernetes_asyncio import client as async_client
+
+        configuration = MagicMock(spec=async_client.Configuration)
+        first_client = MagicMock()
+        first_client.close = AsyncMock()
+        second_client = MagicMock()
+        second_client.close = AsyncMock()
+        mock_api_client_cls.side_effect = [first_client, second_client]
+
+        helper = AsyncK8sHelper(configuration=configuration)
+        await helper._ensure_initialized()
+        self.assertIs(helper._api_client, first_client)
+
+        await helper.close()
+        first_client.close.assert_awaited_once()
+        self.assertIsNone(helper._api_client)
+        self.assertFalse(helper._initialized)
+
+        await helper._ensure_initialized()
+        self.assertIs(helper._api_client, second_client)
+        self.assertEqual(mock_api_client_cls.call_count, 2)
+        mock_api_client_cls.assert_called_with(configuration=configuration)
+
+
 if __name__ == "__main__":
     unittest.main()

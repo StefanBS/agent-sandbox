@@ -53,6 +53,17 @@ class TestAsyncSandboxClient(unittest.IsolatedAsyncioTestCase):
         self.mock_sandbox_class = MagicMock()
         self.client.sandbox_class = self.mock_sandbox_class
 
+    @patch("k8s_agent_sandbox.async_sandbox_client.AsyncK8sHelper")
+    def test_configuration_forwarded_to_k8s_helper(self, MockAsyncK8sHelper):
+        configuration = MagicMock()
+        client = AsyncSandboxClient(
+            connection_config=self.config,
+            cleanup=False,
+            configuration=configuration,
+        )
+        MockAsyncK8sHelper.assert_called_once_with(configuration=configuration)
+        self.assertIs(client._configuration, configuration)
+
     async def test_create_sandbox_success(self):
         self.mock_k8s_helper.resolve_sandbox_name = AsyncMock(return_value="resolved-id")
         self.mock_k8s_helper.get_sandbox = AsyncMock(return_value={"metadata": {}})
@@ -230,21 +241,37 @@ class TestAsyncSandboxClient(unittest.IsolatedAsyncioTestCase):
             mock_atexit.register.assert_not_called()
 
     def test_atexit_cleanup_deletes_tracked_claims(self):
-        """_atexit_cleanup should open a fresh AsyncK8sHelper and delete all tracked claims."""
+        """_atexit_cleanup opens a fresh AsyncK8sHelper and deletes all tracked claims."""
         self.client._active_connection_sandboxes = {
             ("default", "claim-abc"): MagicMock(),
             ("other-ns", "claim-xyz"): MagicMock(),
         }
+        configuration = MagicMock()
+        self.client._configuration = configuration
         mock_helper_instance = MagicMock()
         mock_helper_instance.delete_sandbox_claim = AsyncMock()
         mock_helper_instance.close = AsyncMock()
 
-        with patch("k8s_agent_sandbox.async_sandbox_client.AsyncK8sHelper", return_value=mock_helper_instance):
+        with patch("k8s_agent_sandbox.async_sandbox_client.AsyncK8sHelper", return_value=mock_helper_instance) as MockHelper:
             self.client._atexit_cleanup()
+            MockHelper.assert_called_once_with(configuration=configuration)
 
         mock_helper_instance.delete_sandbox_claim.assert_any_call("claim-abc", "default")
         mock_helper_instance.delete_sandbox_claim.assert_any_call("claim-xyz", "other-ns")
-        mock_helper_instance.close.assert_called_once()
+        mock_helper_instance.close.assert_awaited_once()
+
+    def test_atexit_cleanup_without_configuration_builds_default_helper(self):
+        self.client._active_connection_sandboxes = {("default", "claim-abc"): MagicMock()}
+        self.client._configuration = None
+        mock_helper_instance = MagicMock()
+        mock_helper_instance.delete_sandbox_claim = AsyncMock()
+        mock_helper_instance.close = AsyncMock()
+
+        with patch("k8s_agent_sandbox.async_sandbox_client.AsyncK8sHelper", return_value=mock_helper_instance) as MockHelper:
+            self.client._atexit_cleanup()
+            MockHelper.assert_called_once_with(configuration=None)
+
+        mock_helper_instance.close.assert_awaited_once()
 
     def test_atexit_cleanup_skips_when_no_sandboxes(self):
         """_atexit_cleanup should be a no-op when there are no tracked sandboxes."""

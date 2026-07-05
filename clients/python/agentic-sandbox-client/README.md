@@ -286,7 +286,37 @@ async def main():
 asyncio.run(main())
 ```
 
-### 7. Labels and Pod Metadata
+### 7. Custom kubeconfig / cluster credentials
+
+By default the SDK loads credentials from in-cluster config or `~/.kube/config`
+(or the path in `KUBECONFIG`). To target a specific kubeconfig file, context, or
+cluster without touching environment variables — multi-cluster setups, CI, or
+tests with `pytest-kind` — build a `kubernetes.client.Configuration` and pass it
+as `configuration`. The SDK then skips default kubeconfig loading and builds (and
+owns) its own API client, so there is nothing for you to close.
+
+```python
+from kubernetes import client, config
+from k8s_agent_sandbox import SandboxClient
+from k8s_agent_sandbox.models import SandboxGatewayConnectionConfig
+
+configuration = client.Configuration()
+config.load_kube_config(
+    config_file="/path/to/kubeconfig",
+    context="my-context",  # optional
+    client_configuration=configuration,
+)
+
+client = SandboxClient(
+    configuration=configuration,
+    connection_config=SandboxGatewayConnectionConfig(gateway_name="external-http-gateway"),
+)
+```
+
+`AsyncSandboxClient` accepts the same `configuration` parameter; build it with
+`kubernetes_asyncio` (`await config.load_kube_config(client_configuration=...)`).
+
+### 8. Labels and Pod Metadata
 
 `create_sandbox` lets you attach metadata at two different levels:
 
@@ -321,7 +351,7 @@ Behavioral notes:
   domain allow-list and system-label restrictions are enforced server-side and
   are not replicated client-side.
 
-### 8. Custom Volume Claim Templates
+### 9. Custom Volume Claim Templates
 
 You can dynamically request persistent volumes to be attached to your Sandbox Pod by specifying `volume_claim_templates`. This allows the sandbox to mount custom PersistentVolumeClaims (PVCs).
 

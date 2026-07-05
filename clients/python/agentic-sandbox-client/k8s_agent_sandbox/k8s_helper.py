@@ -34,13 +34,23 @@ from .utils import select_pod_ip
 class K8sHelper:
     """Helper class for Kubernetes API interactions."""
 
-    def __init__(self):
-        try:
-            config.load_incluster_config()
-        except config.ConfigException:
-            config.load_kube_config()
-        self.custom_objects_api = client.CustomObjectsApi()
-        self.core_v1_api = client.CoreV1Api()
+    def __init__(self, configuration: client.Configuration | None = None):
+        """Initialize the Kubernetes helper.
+
+        Args:
+            configuration: When set, skip default kubeconfig loading and build
+                the ``ApiClient`` from it instead of in-cluster/``~/.kube/config``.
+        """
+        if configuration is None:
+            try:
+                config.load_incluster_config()
+            except config.ConfigException:
+                config.load_kube_config()
+            api_client = None
+        else:
+            api_client = client.ApiClient(configuration=configuration)
+        self.custom_objects_api = client.CustomObjectsApi(api_client)
+        self.core_v1_api = client.CoreV1Api(api_client)
 
     def create_sandbox_claim(
         self,

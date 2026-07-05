@@ -38,9 +38,16 @@ from .utils import select_pod_ip, is_valid_ip, is_valid_gateway_hostname
 class AsyncK8sHelper:
     """Async helper class for Kubernetes API interactions using kubernetes_asyncio."""
 
-    def __init__(self):
+    def __init__(self, configuration: client.Configuration | None = None):
+        """Initialize the async Kubernetes helper.
+
+        Args:
+            configuration: When set, skip default kubeconfig loading and build
+                the ``ApiClient`` from it instead of in-cluster/``~/.kube/config``.
+        """
         self._initialized = False
         self._init_lock = asyncio.Lock()
+        self._configuration = configuration
         self._api_client: client.ApiClient | None = None
 
     async def _ensure_initialized(self):
@@ -49,11 +56,16 @@ class AsyncK8sHelper:
         async with self._init_lock:
             if self._initialized:
                 return
-            try:
-                config.load_incluster_config()
-            except config.ConfigException:
-                await config.load_kube_config()
-            self._api_client = client.ApiClient()
+            if self._configuration is None:
+                try:
+                    config.load_incluster_config()
+                except config.ConfigException:
+                    await config.load_kube_config()
+                self._api_client = client.ApiClient()
+            else:
+                self._api_client = client.ApiClient(
+                    configuration=self._configuration
+                )
             self.custom_objects_api = client.CustomObjectsApi(self._api_client)
             self.core_v1_api = client.CoreV1Api(self._api_client)
             self._initialized = True
@@ -349,8 +361,8 @@ class AsyncK8sHelper:
                 await w.close()
 
     async def close(self):
-        """Closes the shared Kubernetes API client session."""
-        if self._api_client:
+        """Close and de-initialize the API client so a later call rebuilds it."""
+        if self._api_client is not None:
             await self._api_client.close()
             self._api_client = None
-            self._initialized = False
+        self._initialized = False

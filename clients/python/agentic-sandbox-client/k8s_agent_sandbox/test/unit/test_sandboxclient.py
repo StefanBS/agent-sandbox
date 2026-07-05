@@ -50,6 +50,12 @@ class TestSandboxClient(unittest.TestCase):
         self.mock_sandbox_class = MagicMock()
         self.client.sandbox_class = self.mock_sandbox_class
 
+    @patch('k8s_agent_sandbox.sandbox_client.K8sHelper')
+    def test_configuration_forwarded_to_k8s_helper(self, MockK8sHelper):
+        configuration = MagicMock()
+        SandboxClient(configuration=configuration)
+        MockK8sHelper.assert_called_once_with(configuration=configuration)
+
     @patch('uuid.uuid4')
     def test_create_sandbox_success(self, mock_uuid):
         mock_uuid.return_value.hex = '1234abcd'

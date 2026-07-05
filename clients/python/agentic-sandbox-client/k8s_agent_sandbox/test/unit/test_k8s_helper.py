@@ -15,7 +15,7 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
-from kubernetes import client
+from kubernetes import client, config
 from k8s_agent_sandbox.k8s_helper import K8sHelper
 from k8s_agent_sandbox.exceptions import SandboxMetadataError, SandboxTemplateNotFoundError
 
@@ -564,6 +564,52 @@ class TestK8sHelperWaitForGatewayIP(unittest.TestCase):
         helper = K8sHelper()
         ip = helper.wait_for_gateway_ip("test-gateway", "default", timeout=5)
         self.assertEqual(ip, "192.168.1.1")
+
+
+class TestK8sHelperConfigurationInit(unittest.TestCase):
+    @patch("k8s_agent_sandbox.k8s_helper.client.CoreV1Api")
+    @patch("k8s_agent_sandbox.k8s_helper.client.CustomObjectsApi")
+    @patch("k8s_agent_sandbox.k8s_helper.config")
+    def test_default_path_loads_incluster_config(
+        self, mock_config, mock_custom_api_cls, mock_core_api_cls
+    ):
+        K8sHelper()
+        mock_config.load_incluster_config.assert_called_once()
+        mock_config.load_kube_config.assert_not_called()
+        mock_custom_api_cls.assert_called_once_with(None)
+        mock_core_api_cls.assert_called_once_with(None)
+
+    @patch("k8s_agent_sandbox.k8s_helper.client.CoreV1Api")
+    @patch("k8s_agent_sandbox.k8s_helper.client.CustomObjectsApi")
+    @patch("k8s_agent_sandbox.k8s_helper.config")
+    def test_default_path_falls_back_to_kubeconfig_on_config_exception(
+        self, mock_config, mock_custom_api_cls, mock_core_api_cls
+    ):
+        mock_config.ConfigException = config.ConfigException
+        mock_config.load_incluster_config.side_effect = config.ConfigException(
+            "not in cluster"
+        )
+        K8sHelper()
+        mock_config.load_kube_config.assert_called_once()
+        mock_custom_api_cls.assert_called_once_with(None)
+        mock_core_api_cls.assert_called_once_with(None)
+
+    @patch("k8s_agent_sandbox.k8s_helper.client.ApiClient")
+    @patch("k8s_agent_sandbox.k8s_helper.client.CoreV1Api")
+    @patch("k8s_agent_sandbox.k8s_helper.client.CustomObjectsApi")
+    @patch("k8s_agent_sandbox.k8s_helper.config")
+    def test_configuration_skips_default_config_loading(
+        self, mock_config, mock_custom_api_cls, mock_core_api_cls, mock_api_client_cls
+    ):
+        configuration = MagicMock(spec=client.Configuration)
+        built_client = MagicMock()
+        mock_api_client_cls.return_value = built_client
+        K8sHelper(configuration=configuration)
+        mock_config.load_incluster_config.assert_not_called()
+        mock_config.load_kube_config.assert_not_called()
+        mock_api_client_cls.assert_called_once_with(configuration=configuration)
+        mock_custom_api_cls.assert_called_once_with(built_client)
+        mock_core_api_cls.assert_called_once_with(built_client)
 
 
 if __name__ == '__main__':

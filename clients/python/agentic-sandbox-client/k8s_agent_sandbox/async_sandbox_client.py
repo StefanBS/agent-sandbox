@@ -27,6 +27,8 @@ import time
 import uuid
 from typing import Generic, TypeVar
 
+from kubernetes_asyncio import client
+
 from .async_k8s_helper import AsyncK8sHelper
 from .async_sandbox import AsyncSandbox
 from .exceptions import SandboxNotFoundError
@@ -76,6 +78,7 @@ class AsyncSandboxClient(Generic[T]):
         connection_config: SandboxConnectionConfig | None = None,
         tracer_config: SandboxTracerConfig | None = None,
         cleanup: bool = True,
+        configuration: client.Configuration | None = None,
     ):
         """
         Args:
@@ -94,6 +97,8 @@ class AsyncSandboxClient(Generic[T]):
                 sandboxes are not leaked when a caller forgets to clean up;
                 pass ``cleanup=False`` to opt out. Note this differs from the
                 synchronous ``SandboxClient``, which defaults to False.
+            configuration: When set, skip default kubeconfig loading and build
+                the ``ApiClient`` from it instead of in-cluster/``~/.kube/config``.
         """
         if connection_config is None:
             raise ValueError(
@@ -110,7 +115,9 @@ class AsyncSandboxClient(Generic[T]):
             initialize_tracer(self.tracer_config.trace_service_name)
         self.tracing_manager, self.tracer = create_tracer_manager(self.tracer_config)
 
-        self.k8s_helper = AsyncK8sHelper()
+        # Kept so atexit cleanup can rebuild a client on a fresh event loop.
+        self._configuration = configuration
+        self.k8s_helper = AsyncK8sHelper(configuration=configuration)
 
         self._active_connection_sandboxes: dict[tuple[str, str], T] = {}
         self._lock = asyncio.Lock()
@@ -380,7 +387,9 @@ class AsyncSandboxClient(Generic[T]):
             return
 
         async def _do_cleanup():
-            helper = AsyncK8sHelper()
+            # The original helper's client is bound to a now-gone event loop, so
+            # rebuild from the loop-agnostic configuration on this loop.
+            helper = AsyncK8sHelper(configuration=self._configuration)
             try:
                 async def _delete_one(ns, claim_name):
                     try:
