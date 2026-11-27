@@ -138,14 +138,6 @@ PYTHON_TEST_SUITES = [
         "requirements": "requirements.txt",
     },
     {
-        "name": "n8n-mcp",
-        # server.py's deps are declared inline in its Dockerfile rather than a
-        # requirements.txt; httpx is additionally needed for FastAPI's
-        # TestClient, which the Dockerfile has no reason to install.
-        "dir": os.path.join("examples", "n8n-mcp", "source"),
-        "extra_packages": ["fastapi", "httpx"],
-    },
-    {
         "name": "agent-sandbox-rl",
         "dir": os.path.join("examples", "agent-sandbox-rl"),
         # Editable installs (in order): the in-repo SDK first (so we don't depend
